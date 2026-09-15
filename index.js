@@ -1,0 +1,20 @@
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const connectDB = require('./config/db');
+const authRoutes = require('./routes/authRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
+const app = express();
+app.use(cors({ origin: 'http://localhost:5173' }));
+app.use(express.json({ limit: '1mb' }));
+app.get('/api/health', (_req, res) => res.json({ success: true, message: 'CARE Hub API is running' }));
+app.use('/api/auth', authRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use((_req, res) => res.status(404).json({ success: false, message: 'Route not found' }));
+app.use(require('./middleware/errorHandler'));
+const startServer = async () => {
+  if (!process.env.MONGO_URI || !process.env.JWT_SECRET) throw new Error('MONGO_URI and JWT_SECRET must be set in server/.env');
+  await connectDB();
+  app.listen(process.env.PORT || 5000, () => console.log(`CARE Hub server running on port: ${process.env.PORT || 5000}`));
+};
+startServer().catch((error) => { console.error(`Unable to start server: ${error.message}`); process.exit(1); });
