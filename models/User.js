@@ -1,47 +1,57 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
-
-const userSchema = new mongoose.Schema({
-  name:
+const userSchema = new mongoose.Schema(
   {
-    type: String,
-    required: true,
-    trim: true
+    name: {
+      type: String,
+      required: [true, 'Please provide a name'],
+      trim: true,
+    },
+    email: {
+      type: String,
+      required: [true, 'Please provide an email address'],
+      unique: true,
+      lowercase: true,
+      trim: true,
+      match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email address'],
+    },
+    password: {
+      type: String,
+      required: [true, 'Please provide a password'],
+      minlength: [6, 'Password must be at least 6 characters'],
+      select: false,
+    },
+    role: {
+      type: String,
+      enum: ['Employee', 'Reviewer', 'HR', 'SUPER_ADMIN', 'HR_ADMIN', 'HR_HRBP', 'MANAGER', 'EMPLOYEE', 'VIEWER'],
+      default: 'Employee',
+      required: true,
+    },
+    status: {
+      type: String,
+      enum: ['active', 'inactive', 'suspended'],
+      default: 'active',
+    },
+    refreshTokens: {
+      type: [String],
+      default: [],
+      select: false,
+    },
+    passwordResetToken: {
+      type: String,
+      select: false,
+    },
+    passwordResetExpires: {
+      type: Date,
+      select: false,
+    },
   },
-  email:
-  {
-    type: String,
-    required: true,
-    unique: true,
-    lowercase: true,
-    trim: true,
-    match: [/^\S+@\S+\.\S+$/, 'Please provide a valid email address']
-  },
-  password:
-  {
-    type: String,
-    required: true,
-    minlength: 6,
-    select: false
-  },
-  role: {
-    type: String,
-    enum: ['Employee', 'Reviewer', 'HR'],
-    default: 'Employee',
-    required: true
-  },
-  status: {
-    type: String,
-    enum: ['active', 'inactive'],
-    default: 'active'
-  }
-},
-  { timestamps: true });
+  { timestamps: true }
+);
 
 userSchema.pre('save', async function hashPassword() {
   if (!this.isModified('password')) return;
-
   this.password = await bcrypt.hash(this.password, 12);
 });
 

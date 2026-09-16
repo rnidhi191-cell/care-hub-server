@@ -1,2 +1,2 @@
-// Kept as the named authentication route entry point requested by the project structure.
-module.exports = require('./userRoutes');
+// Legacy /api/auth routes - fully compatible with v1 routes
+module.exports = require('./v1/authRoutes');
