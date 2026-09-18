@@ -10,6 +10,8 @@ const attachmentType = (type) => (req, _res, next) => { req.attachmentType = typ
 // All review routes require authentication
 router.use(auth);
 
+router.get('/eligible-reviewers', allowRoles('EMPLOYEE'), review.eligibleReviewers);
+
 // Self Reviews
 router
   .route('/self-reviews')
@@ -38,12 +40,15 @@ router
 router
   .route('/assessments')
   .get(review.listAssessments)
-  .post(allowRoles('MANAGER', 'HR', 'ADMIN'), review.createAssessment);
+  .post(allowRoles('EMPLOYEE', 'MANAGER', 'HR', 'ADMIN'), review.createAssessment);
 
 router
   .route('/assessments/:id')
-  .put(allowRoles('MANAGER', 'HR', 'ADMIN'), review.updateAssessment)
-  .delete(allowRoles('MANAGER', 'HR', 'ADMIN'), review.deleteAssessment);
+  .put(allowRoles('EMPLOYEE', 'MANAGER', 'HR', 'ADMIN'), review.updateAssessment)
+  .delete(allowRoles('EMPLOYEE', 'MANAGER', 'HR', 'ADMIN'), review.deleteAssessment);
+
+router.post('/manager-reviews', allowRoles('MANAGER'), review.createManagerReview);
+router.put('/manager-reviews/:id/finalize', allowRoles('HR', 'ADMIN'), review.finalizeManagerReview);
 
 // HR Validation — only HR/ADMIN can approve or return
 router

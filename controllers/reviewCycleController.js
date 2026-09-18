@@ -1,7 +1,9 @@
 const ReviewCycle = require('../models/ReviewCycle');
 const SelfReview = require('../models/SelfReview');
 const ReviewerAssessment = require('../models/ReviewerAssessment');
+const ManagerReview = require('../models/ManagerReview');
 const User = require('../models/User');
+const { notifyUsers } = require('../services/notificationService');
 
 const DATE_FIELDS = [
   'startDate', 'endDate', 'selfReviewDeadline', 'reviewerDeadline', 'hrValidationDeadline',
@@ -94,13 +96,38 @@ const withMonitoring = async (cycle, managerId = null) => {
 
 const listCycles = async (req, res, next) => {
   try {
-    const managerId = req.user.role === 'MANAGER' ? req.user._id : null;
-    const filter = managerId ? { 'assignments.reviewer': managerId } : {};
+    const filter = {};
+    if (req.user.role === 'MANAGER') {
+      filter['assignments.reviewer'] = req.user._id;
+    } else if (req.user.role === 'EMPLOYEE') {
+      filter['assignments.employee'] = req.user._id;
+      filter['status'] = 'ACTIVE';
+    }
+
     const cycles = await ReviewCycle.find(filter)
       .populate('assignments.employee', 'name email role')
       .populate('assignments.reviewer', 'name email role')
       .sort({ year: -1, createdAt: -1 });
-    res.json({ success: true, data: await Promise.all(cycles.map((cycle) => withMonitoring(cycle, managerId))) });
+
+    const managerId = req.user.role === 'MANAGER' ? req.user._id : null;
+    const employeeId = req.user.role === 'EMPLOYEE' ? req.user._id.toString() : null;
+
+    const monitoredCycles = await Promise.all(cycles.map(async (cycle) => {
+      if (employeeId) {
+        // For employees: return only their own assignment row, no monitoring data
+        const filtered = {
+          ...cycle.toObject(),
+          assignments: cycle.assignments.filter(a => {
+            const empId = a.employee?._id?.toString() || a.employee?.toString();
+            return empId === employeeId;
+          }),
+        };
+        return filtered;
+      }
+      return withMonitoring(cycle, managerId);
+    }));
+
+    res.json({ success: true, data: monitoredCycles });
   } catch (error) { next(error); }
 };
 
@@ -112,9 +139,30 @@ const getCycle = async (req, res, next) => {
     if (!cycle) return res.status(404).json({ success: false, message: 'Review cycle not found' });
 
     const managerId = req.user.role === 'MANAGER' ? req.user._id : null;
-    if (managerId && !cycle.assignments.some((assignment) => assignment.reviewer?._id?.equals(managerId))) {
+    if (managerId && !cycle.assignments.some((a) => a.reviewer?._id?.toString() === managerId.toString())) {
       return res.status(403).json({ success: false, message: 'You are not assigned to this review cycle' });
     }
+
+    const employeeId = req.user.role === 'EMPLOYEE' ? req.user._id.toString() : null;
+    if (employeeId) {
+      const isAssigned = cycle.assignments.some(a => {
+        const empId = a.employee?._id?.toString() || a.employee?.toString();
+        return empId === employeeId;
+      });
+      if (!isAssigned) return res.status(403).json({ success: false, message: 'You are not assigned to this review cycle' });
+
+      return res.json({
+        success: true,
+        data: {
+          ...cycle.toObject(),
+          assignments: cycle.assignments.filter(a => {
+            const empId = a.employee?._id?.toString() || a.employee?.toString();
+            return empId === employeeId;
+          }),
+        },
+      });
+    }
+
     res.json({ success: true, data: await withMonitoring(cycle, managerId) });
   } catch (error) { next(error); }
 };
@@ -175,6 +223,19 @@ const transitionCycle = (status) => async (req, res, next) => {
       if (cycle.status !== 'DRAFT') return res.status(400).json({ success: false, message: 'Only draft cycles can be launched' });
       if (!cycle.assignments.length) return res.status(400).json({ success: false, message: 'Assign at least one employee before launching the cycle' });
       cycle.launchedAt = new Date();
+      
+      const eligibleEmployeeIds = cycle.assignments.map(a => a.employee.toString());
+      if (eligibleEmployeeIds.length > 0) {
+        notifyUsers(eligibleEmployeeIds, {
+          type: 'REVIEW_LAUNCH',
+          title: 'New Review Cycle Launched',
+          message: `The ${cycle.cycleName} ${cycle.year} review cycle has been launched. Please start your self-review.`,
+          link: '/self-review',
+          entityType: 'ReviewCycle',
+          entityId: cycle._id,
+          dedupeKey: `review-launch:${cycle._id}`
+        }).catch(err => console.error('Failed to send review cycle notifications', err));
+      }
     } else {
       if (cycle.status !== 'ACTIVE') return res.status(400).json({ success: false, message: 'Only active cycles can be closed' });
       cycle.closedAt = new Date();
@@ -185,4 +246,26 @@ const transitionCycle = (status) => async (req, res, next) => {
   } catch (error) { next(error); }
 };
 
-module.exports = { listCycles, getCycle, createCycle, updateCycle, assignPeople, launchCycle: transitionCycle('ACTIVE'), closeCycle: transitionCycle('CLOSED') };
+// A cycle is the parent record for the complete CARE workflow.  Delete its
+// dependent reviews first so old cycles never leave orphaned assessments.
+const deleteCycle = async (req, res, next) => {
+  try {
+    const cycle = await ReviewCycle.findById(req.params.id);
+    if (!cycle) return res.status(404).json({ success: false, message: 'Review cycle not found' });
+
+    const selfReviews = await SelfReview.find({ cycle: cycle.cycleName, year: cycle.year }).select('_id');
+    const selfReviewIds = selfReviews.map((review) => review._id);
+
+    if (selfReviewIds.length) {
+      await Promise.all([
+        ReviewerAssessment.deleteMany({ selfReview: { $in: selfReviewIds } }),
+        ManagerReview.deleteMany({ selfReview: { $in: selfReviewIds } }),
+      ]);
+      await SelfReview.deleteMany({ _id: { $in: selfReviewIds } });
+    }
+    await cycle.deleteOne();
+    res.json({ success: true, message: 'Review cycle and all related reviews deleted successfully' });
+  } catch (error) { next(error); }
+};
+
+module.exports = { listCycles, getCycle, createCycle, updateCycle, assignPeople, deleteCycle, launchCycle: transitionCycle('ACTIVE'), closeCycle: transitionCycle('CLOSED') };

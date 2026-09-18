@@ -21,6 +21,12 @@ const selfReviewSchema = new mongoose.Schema(
       ref: 'User',
       required: true,
     },
+    selectedReviewer: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    workflowStatus: {
+      type: String,
+      enum: ['SELF_REVIEW', 'COLLEAGUE_REVIEW', 'MANAGER_REVIEW', 'HR_FINAL_REVIEW', 'COMPLETED'],
+      default: 'SELF_REVIEW',
+    },
     cycle: {
       type: String,
       enum: ['April', 'September'],
