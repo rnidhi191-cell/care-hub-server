@@ -181,7 +181,7 @@ const reviewerAssessmentSchema = new mongoose.Schema(
 );
 
 // Auto-calculate scores before saving
-reviewerAssessmentSchema.pre('save', async function computeScores(next) {
+reviewerAssessmentSchema.pre('save', async function computeScores() {
   if (this.performanceRatings && this.performanceRatings.length > 0) {
     const total = this.performanceRatings.reduce((sum, r) => sum + r.rating, 0);
     this.competencyAverage = parseFloat((total / this.performanceRatings.length).toFixed(2));
@@ -229,7 +229,7 @@ reviewerAssessmentSchema.pre('save', async function computeScores(next) {
     }
   }
 
-  next();
+  
 });
 
 module.exports = mongoose.model('ReviewerAssessment', reviewerAssessmentSchema);

@@ -27,6 +27,10 @@ module.exports = (err, _req, res, _next) => {
     status = 401;
     code = 'TOKEN_EXPIRED';
     message = 'Authentication token has expired';
+  } else if (err.name === 'MulterError') {
+    status = 400;
+    code = 'INVALID_UPLOAD';
+    message = err.code === 'LIMIT_FILE_SIZE' ? 'File must be 10 MB or smaller' : 'Unsupported file. Allowed: PDF, Office documents, CSV, text, PNG, and JPEG.';
   }
 
   res.status(status).json({

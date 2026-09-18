@@ -17,8 +17,8 @@ router.get('/profile', auth.getMe); // Alias
 router.post('/change-password', auth.changePassword);
 
 // Admin-only User Management
-router.patch('/status', requireRole('SUPER_ADMIN', 'HR_ADMIN'), auth.updateAccountStatus);
+router.post('/hr', requireRole('ADMIN'), auth.createHR);
+router.patch('/status', requireRole('ADMIN'), auth.updateAccountStatus);
 router.get('/users', requirePermission('employee:view'), auth.listUsers);
 
 module.exports = router;
-

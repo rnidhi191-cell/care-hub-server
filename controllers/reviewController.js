@@ -2,6 +2,8 @@ const SelfReview = require('../models/SelfReview');
 const ReviewerAssessment = require('../models/ReviewerAssessment');
 const DevelopmentPlan = require('../models/DevelopmentPlan');
 const AuditLog = require('../models/AuditLog');
+const ReviewCycle = require('../models/ReviewCycle');
+const { notifyUsers, hrAdminIds } = require('../services/notificationService');
 
 
 const deny = (res) => {
@@ -12,16 +14,49 @@ const missing = (res, name) => {
   return res.status(404).json({ success: false, message: `${name} not found` });
 };
 
+const managerIsAssigned = async (managerId, review) => {
+  const employeeId = review.employee?._id || review.employee;
+  return Boolean(await ReviewCycle.exists({
+    cycleName: review.cycle,
+    year: review.year,
+    assignments: { $elemMatch: { employee: employeeId, reviewer: managerId } },
+  }));
+};
+
+const assignedReviewerId = async (review) => {
+  const cycle = await ReviewCycle.findOne({
+    cycleName: review.cycle,
+    year: review.year,
+    'assignments.employee': review.employee,
+  }).select('assignments');
+  const assignment = cycle?.assignments.find((item) => item.employee.equals(review.employee));
+  return assignment?.reviewer || null;
+};
+
+const sendNotification = (recipients, payload) => notifyUsers(recipients, payload).catch((error) => {
+  console.error('NOTIFICATION ERROR:', error.message);
+});
+
 // --- Self Reviews ---
 
 const listSelfReviews = async (req, res, next) => {
   try {
-    const filter = req.user.role === 'Employee' ? { employee: req.user._id } : {};
-    
+    const isEmployee = req.user.role === 'EMPLOYEE';
+    const filter = isEmployee ? { employee: req.user._id } : {};
+
+    if (req.user.role === 'MANAGER') {
+      const cycles = await ReviewCycle.find({ 'assignments.reviewer': req.user._id }).select('cycleName year assignments');
+      const assignedReviews = cycles.flatMap((cycle) => cycle.assignments
+        .filter((assignment) => assignment.reviewer?.equals(req.user._id))
+        .map((assignment) => ({ employee: assignment.employee, cycle: cycle.cycleName, year: cycle.year })));
+      if (!assignedReviews.length) return res.json({ success: true, data: [] });
+      filter.$or = assignedReviews;
+    }
+
     // Optional filters for HR / Reviewer
     if (req.query.cycle) filter.cycle = req.query.cycle;
     if (req.query.year) filter.year = Number(req.query.year);
-    if (req.query.employee && req.user.role !== 'Employee') filter.employee = req.query.employee;
+    if (req.query.employee && !isEmployee) filter.employee = req.query.employee;
 
     const selfReviews = await SelfReview.find(filter)
       .populate('employee', 'name email role')
@@ -30,7 +65,9 @@ const listSelfReviews = async (req, res, next) => {
     // Attach assessment status for convenience
     const reviewIds = selfReviews.map((r) => r._id);
     const assessments = await ReviewerAssessment.find({ selfReview: { $in: reviewIds } })
-      .select('selfReview reviewer createdAt')
+      .select(isEmployee
+        ? 'selfReview reviewer createdAt isFinalized calibratedRating finalRating hrValidation.status'
+        : 'selfReview reviewer createdAt isFinalized')
       .populate('reviewer', 'name email');
 
     const assessmentMap = new Map();
@@ -53,9 +90,10 @@ const getSelfReview = async (req, res, next) => {
     const item = await SelfReview.findById(req.params.id).populate('employee', 'name email role');
     if (!item) return missing(res, 'Self-review');
 
-    if (req.user.role === 'Employee' && !item.employee._id.equals(req.user._id)) {
+    if (req.user.role === 'EMPLOYEE' && !item.employee._id.equals(req.user._id)) {
       return deny(res);
     }
+    if (req.user.role === 'MANAGER' && !(await managerIsAssigned(req.user._id, item))) return deny(res);
 
     const assessment = await ReviewerAssessment.findOne({ selfReview: item._id })
       .populate('reviewer', 'name email');
@@ -101,6 +139,14 @@ const createSelfReview = async (req, res, next) => {
     });
 
     const populated = await newReview.populate('employee', 'name email role');
+    if (newReview.status === 'Completed') {
+      const reviewer = await assignedReviewerId(newReview);
+      sendNotification([reviewer], {
+        type: 'REVIEW_SUBMITTED', title: 'Self-review submitted',
+        message: `${populated.employee.name} submitted their ${newReview.cycle} ${newReview.year} CARE self-review.`,
+        link: '/reviewer', entityType: 'SelfReview', entityId: newReview._id, dedupeKey: `self-review-submitted:${newReview._id}`,
+      });
+    }
     res.status(201).json({ success: true, message: 'Self-review created successfully', data: populated });
   } catch (error) {
     next(error);
@@ -112,7 +158,7 @@ const updateSelfReview = async (req, res, next) => {
     const item = await SelfReview.findById(req.params.id);
     if (!item) return missing(res, 'Self-review');
 
-    if (req.user.role === 'Employee' && !item.employee.equals(req.user._id)) {
+    if (req.user.role === 'EMPLOYEE' && !item.employee.equals(req.user._id)) {
       return deny(res);
     }
 
@@ -138,7 +184,7 @@ const updateSelfReview = async (req, res, next) => {
         entityId: item._id,
         oldValue: { status: oldStatus },
         newValue: { status: req.body.status },
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     if (item.acknowledged && !oldAcknowledged) {
@@ -148,7 +194,13 @@ const updateSelfReview = async (req, res, next) => {
         entity: 'SelfReview',
         entityId: item._id,
         newValue: { comment: item.acknowledgementComment, raisedConcern: item.raisedConcern },
-      }).catch(() => {});
+      }).catch(() => { });
+      const [reviewer, hrUsers] = await Promise.all([assignedReviewerId(item), hrAdminIds()]);
+      sendNotification([reviewer, ...hrUsers], {
+        type: 'ACKNOWLEDGEMENT', title: 'Review acknowledged',
+        message: `The employee acknowledged their ${item.cycle} ${item.year} final review.`,
+        link: '/hr', entityType: 'SelfReview', entityId: item._id, dedupeKey: `acknowledged:${item._id}`,
+      });
     }
 
     const populated = await item.populate('employee', 'name email role');
@@ -163,7 +215,7 @@ const deleteSelfReview = async (req, res, next) => {
     const item = await SelfReview.findById(req.params.id);
     if (!item) return missing(res, 'Self-review');
 
-    if (req.user.role === 'Employee' && !item.employee.equals(req.user._id)) {
+    if (req.user.role === 'EMPLOYEE' && !item.employee.equals(req.user._id)) {
       return deny(res);
     }
 
@@ -180,7 +232,7 @@ const deleteSelfReview = async (req, res, next) => {
 
 const listAssessments = async (req, res, next) => {
   try {
-    const filter = req.user.role === 'Reviewer' ? { reviewer: req.user._id } : {};
+    const filter = req.user.role === 'MANAGER' ? { reviewer: req.user._id } : {};
 
     let items = await ReviewerAssessment.find(filter)
       .populate({
@@ -190,8 +242,12 @@ const listAssessments = async (req, res, next) => {
       .populate('reviewer', 'name email role')
       .sort({ createdAt: -1 });
 
-    if (req.user.role === 'Employee') {
+    if (req.user.role === 'EMPLOYEE') {
       items = items.filter((x) => x.selfReview?.employee?._id?.equals(req.user._id));
+    }
+    if (req.user.role === 'MANAGER') {
+      const visibility = await Promise.all(items.map(async (item) => managerIsAssigned(req.user._id, item.selfReview)));
+      items = items.filter((_item, index) => visibility[index]);
     }
 
     res.json({ success: true, data: items });
@@ -211,9 +267,10 @@ const getAssessmentBySelfReview = async (req, res, next) => {
 
     if (!assessment) return missing(res, 'Assessment');
 
-    if (req.user.role === 'Employee' && !assessment.selfReview?.employee?._id?.equals(req.user._id)) {
+    if (req.user.role === 'EMPLOYEE' && !assessment.selfReview?.employee?._id?.equals(req.user._id)) {
       return deny(res);
     }
+    if (req.user.role === 'MANAGER' && !(await managerIsAssigned(req.user._id, assessment.selfReview))) return deny(res);
 
     res.json({ success: true, data: assessment });
   } catch (error) {
@@ -231,6 +288,8 @@ const createAssessment = async (req, res, next) => {
 
     const review = await SelfReview.findById(selfReviewId);
     if (!review) return missing(res, 'Self-review');
+
+    if (req.user.role === 'MANAGER' && !(await managerIsAssigned(req.user._id, review))) return deny(res);
 
     // Prevent reviewer from assessing themselves
     if (review.employee.equals(req.user._id)) {
@@ -264,12 +323,19 @@ const createAssessment = async (req, res, next) => {
       action: 'ASSESSMENT_SUBMITTED',
       entity: 'ReviewerAssessment',
       entityId: assessment._id,
-    }).catch(() => {});
+    }).catch(() => { });
 
     const populated = await assessment.populate([
       { path: 'selfReview', populate: { path: 'employee', select: 'name email role' } },
       { path: 'reviewer', select: 'name email role' },
     ]);
+
+    const hrUsers = await hrAdminIds();
+    sendNotification(hrUsers, {
+      type: 'REVIEW_SUBMITTED', title: 'Reviewer assessment submitted',
+      message: `${populated.selfReview.employee.name}'s ${populated.selfReview.cycle} ${populated.selfReview.year} assessment is ready for HR validation.`,
+      link: '/hr', entityType: 'ReviewerAssessment', entityId: assessment._id, dedupeKey: `assessment-submitted:${assessment._id}`,
+    });
 
     res.status(201).json({
       success: true,
@@ -277,6 +343,10 @@ const createAssessment = async (req, res, next) => {
       data: populated,
     });
   } catch (error) {
+    console.error('CREATE ASSESSMENT ERROR:', error);
+  console.error('ERROR MESSAGE:', error.message);
+  console.error('ERROR NAME:', error.name);
+  console.error('ERROR DETAILS:', error.errors);
     next(error);
   }
 };
@@ -286,7 +356,12 @@ const updateAssessment = async (req, res, next) => {
     const item = await ReviewerAssessment.findById(req.params.id);
     if (!item) return missing(res, 'Reviewer assessment');
 
-    if (req.user.role === 'Reviewer' && !item.reviewer.equals(req.user._id)) {
+    if (req.user.role === 'MANAGER') {
+      const review = await SelfReview.findById(item.selfReview);
+      if (!review || !(await managerIsAssigned(req.user._id, review))) return deny(res);
+    }
+
+    if (req.user.role === 'MANAGER' && !item.reviewer.equals(req.user._id)) {
       return deny(res);
     }
 
@@ -306,12 +381,23 @@ const updateAssessment = async (req, res, next) => {
       action: 'ASSESSMENT_MODIFIED',
       entity: 'ReviewerAssessment',
       entityId: item._id,
-    }).catch(() => {});
+    }).catch(() => { });
 
     const populated = await item.populate([
       { path: 'selfReview', populate: { path: 'employee', select: 'name email role' } },
       { path: 'reviewer', select: 'name email role' },
     ]);
+
+    sendNotification([populated.selfReview.employee], {
+      type: 'CALIBRATION', title: 'Review calibration completed',
+      message: `Your ${populated.selfReview.cycle} ${populated.selfReview.year} review has been calibrated and finalized.`,
+      link: '/employee', entityType: 'ReviewerAssessment', entityId: item._id, dedupeKey: `calibrated-employee:${item._id}`,
+    });
+    sendNotification([populated.reviewer], {
+      type: 'CALIBRATION', title: 'Review calibration completed',
+      message: `${populated.selfReview.employee.name}'s ${populated.selfReview.cycle} ${populated.selfReview.year} review has been calibrated and finalized.`,
+      link: '/reviewer', entityType: 'ReviewerAssessment', entityId: item._id, dedupeKey: `calibrated-reviewer:${item._id}`,
+    });
 
     res.json({ success: true, message: 'Assessment updated successfully', data: populated });
   } catch (error) {
@@ -324,7 +410,12 @@ const deleteAssessment = async (req, res, next) => {
     const item = await ReviewerAssessment.findById(req.params.id);
     if (!item) return missing(res, 'Reviewer assessment');
 
-    if (req.user.role === 'Reviewer' && !item.reviewer.equals(req.user._id)) {
+    if (req.user.role === 'MANAGER') {
+      const review = await SelfReview.findById(item.selfReview);
+      if (!review || !(await managerIsAssigned(req.user._id, review))) return deny(res);
+    }
+
+    if (req.user.role === 'MANAGER' && !item.reviewer.equals(req.user._id)) {
       return deny(res);
     }
 
@@ -348,7 +439,7 @@ const calibrateAssessment = async (req, res, next) => {
     item.calibrationReason = calibrationReason || '';
     item.calibrationComments = calibrationComments || '';
     item.finalRating = finalRating || '';
-    
+
     // Also mark as finalized if calibrated
     if (calibratedRating !== undefined) {
       item.isFinalized = true;
@@ -368,7 +459,7 @@ const calibrateAssessment = async (req, res, next) => {
       entityId: item._id,
       oldValue: { calibratedRating: oldCalibratedRating },
       newValue: { calibratedRating, calibrationReason, finalRating },
-    }).catch(() => {});
+    }).catch(() => { });
 
     const populated = await item.populate([
       { path: 'selfReview', populate: { path: 'employee', select: 'name email role' } },
@@ -386,8 +477,8 @@ const calibrateAssessment = async (req, res, next) => {
 
 const listPlans = async (req, res, next) => {
   try {
-    const filter = req.user.role === 'Employee' ? { employee: req.user._id } : {};
-    if (req.query.employee && req.user.role !== 'Employee') filter.employee = req.query.employee;
+    const filter = req.user.role === 'EMPLOYEE' ? { employee: req.user._id } : {};
+    if (req.query.employee && req.user.role !== 'EMPLOYEE') filter.employee = req.query.employee;
 
     const plans = await DevelopmentPlan.find(filter)
       .populate('employee', 'name email role')
@@ -416,6 +507,11 @@ const createPlan = async (req, res, next) => {
     });
 
     const populated = await plan.populate('employee', 'name email role');
+    sendNotification([plan.employee], {
+      type: 'PROGRESS_CHECK', title: 'Progress check assigned',
+      message: `A development plan and progress check has been assigned for ${plan.cycle}.`,
+      link: '/employee', entityType: 'DevelopmentPlan', entityId: plan._id, dedupeKey: `progress-check:${plan._id}`,
+    });
     res.status(201).json({ success: true, message: 'Development plan created', data: populated });
   } catch (error) {
     next(error);
@@ -489,13 +585,25 @@ const hrValidateAssessment = async (req, res, next) => {
       entityId: item._id,
       oldValue: { hrValidationStatus: oldStatus },
       newValue: { hrValidationStatus: status, comments },
-    }).catch(() => {});
+    }).catch(() => { });
 
     const populated = await item.populate([
       { path: 'selfReview', populate: { path: 'employee', select: 'name email role' } },
       { path: 'reviewer', select: 'name email role' },
       { path: 'hrValidation.hrUser', select: 'name email' },
     ]);
+
+    const notificationPayload = {
+      type: status === 'returned' ? 'REVIEW_RETURNED' : 'VALIDATION',
+      title: status === 'returned' ? 'Reviewer assessment returned' : 'Assessment validated',
+      message: status === 'returned'
+        ? `The ${populated.selfReview.cycle} ${populated.selfReview.year} assessment was returned for updates.`
+        : `The ${populated.selfReview.cycle} ${populated.selfReview.year} assessment passed HR validation.`,
+      entityType: 'ReviewerAssessment', entityId: item._id,
+    };
+    const validationKey = `validation:${status}:${item._id}:${item.hrValidation.validatedAt.getTime()}`;
+    sendNotification([populated.reviewer], { ...notificationPayload, link: '/reviewer', dedupeKey: `${validationKey}:reviewer` });
+    sendNotification([populated.selfReview.employee], { ...notificationPayload, link: '/employee', dedupeKey: `${validationKey}:employee` });
 
     res.json({ success: true, message: `Assessment ${status}`, data: populated });
   } catch (error) {

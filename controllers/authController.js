@@ -43,44 +43,39 @@ const validEmail = (email) => {
   return typeof email === 'string' && /^\S+@\S+\.\S+$/.test(email.trim());
 };
 
+const createUser = async ({ name, email, password, role }) => {
+  if (!name?.trim() || !validEmail(email) || typeof password !== 'string' || password.length < 6) {
+    const error = new Error('Please provide a name, valid email, and a password of at least 6 characters');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const normalizedEmail = email.toLowerCase().trim();
+  const existing = await User.findOne({ email: normalizedEmail });
+  if (existing) {
+    const error = new Error('An account with this email already exists');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  return User.create({
+    name: name.trim(),
+    email: normalizedEmail,
+    password,
+    role,
+    status: 'active',
+  });
+};
+
 // -------------------------------------------------------------
 // CONTROLLERS
 // -------------------------------------------------------------
 
 const register = async (req, res, next) => {
   try {
-    const { name, email, password, role } = req.body;
-
-    if (!name?.trim() || !validEmail(email) || typeof password !== 'string' || password.length < 6) {
-      return res.status(400).json({
-        success: false,
-        error: {
-          code: 'VALIDATION_ERROR',
-          message: 'Please provide a name, valid email, and a password of at least 6 characters',
-        },
-      });
-    }
-
-    const normalizedEmail = email.toLowerCase().trim();
-    const existing = await User.findOne({ email: normalizedEmail });
-    if (existing) {
-      return res.status(409).json({
-        success: false,
-        error: {
-          code: 'EMAIL_CONFLICT',
-          message: 'An account with this email already exists',
-        },
-      });
-    }
-
-    const validRole = role ? role : 'Employee';
-    const user = await User.create({
-      name: name.trim(),
-      email: normalizedEmail,
-      password,
-      role: validRole,
-      status: 'active',
-    });
+    const { name, email, password } = req.body;
+    // Public registration never grants a privileged role.
+    const user = await createUser({ name, email, password, role: 'EMPLOYEE' });
 
     const accessToken = createAccessToken(user);
     const refreshToken = createRefreshToken(user);
@@ -98,6 +93,21 @@ const register = async (req, res, next) => {
         refreshToken,
         user: userResponse(user),
       },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Only an authenticated ADMIN may create an HR account.
+const createHR = async (req, res, next) => {
+  try {
+    const { name, email, password } = req.body;
+    const user = await createUser({ name, email, password, role: 'HR' });
+    res.status(201).json({
+      success: true,
+      message: 'HR user created successfully',
+      data: { user: userResponse(user) },
     });
   } catch (error) {
     next(error);
@@ -434,6 +444,7 @@ const listUsers = async (req, res, next) => {
 
 module.exports = {
   register,
+  createHR,
   login,
   refreshToken: refreshTokenHandler,
   logout,

@@ -13,7 +13,13 @@ const legacyAuthRoutes = require('./routes/authRoutes');
 const v1OrganizationRoutes = require('./routes/v1/organizationRoutes');
 const v1EmployeeRoutes = require('./routes/v1/employeeRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
+const roleRoutes = require('./routes/v1/roleRoutes');
+const reviewCycleRoutes = require('./routes/reviewCycleRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const progressCheckRoutes = require('./routes/progressCheckRoutes');
+const reportRoutes = require('./routes/reportRoutes');
 const errorHandler = require('./middleware/errorHandler');
+
 
 const app = express();
 
@@ -86,6 +92,8 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
   customSiteTitle: 'CARE API Documentation',
 }));
+//role routes
+
 
 // Route Mounts (v1 and backward-compatible legacy)
 app.use('/api/v1/auth', v1AuthRoutes);
@@ -94,6 +102,16 @@ app.use('/api/auth', legacyAuthRoutes);
 app.use('/api/v1/organization', v1OrganizationRoutes);
 app.use('/api/v1/employees', v1EmployeeRoutes);
 app.use('/api/employees', v1EmployeeRoutes);
+
+app.use('/api/v1/roles', roleRoutes);
+app.use('/api/v1/review-cycles', reviewCycleRoutes);
+app.use('/api/review-cycles', reviewCycleRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/v1/progress-checks', progressCheckRoutes);
+app.use('/api/progress-checks', progressCheckRoutes);
+app.use('/api/v1/reports', reportRoutes);
+app.use('/api/reports', reportRoutes);
 
 const settingRoutes = require('./routes/settingRoutes');
 

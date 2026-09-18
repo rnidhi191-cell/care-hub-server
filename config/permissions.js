@@ -34,9 +34,9 @@ const PERMISSIONS = {
 };
 
 const ROLE_PERMISSIONS = {
-  SUPER_ADMIN: Object.values(PERMISSIONS),
+  ADMIN: Object.values(PERMISSIONS),
 
-  HR_ADMIN: [
+  HR: [
     PERMISSIONS.REVIEW_CREATE,
     PERMISSIONS.REVIEW_VIEW,
     PERMISSIONS.REVIEW_UPDATE,
@@ -57,22 +57,6 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.REPORT_VIEW,
     PERMISSIONS.REPORT_EXPORT,
     PERMISSIONS.AUDIT_VIEW,
-  ],
-
-  HR_HRBP: [
-    PERMISSIONS.REVIEW_VIEW,
-    PERMISSIONS.REVIEW_UPDATE,
-    PERMISSIONS.REVIEW_VALIDATE,
-    PERMISSIONS.REVIEW_CALIBRATE,
-    PERMISSIONS.EMPLOYEE_VIEW,
-    PERMISSIONS.EMPLOYEE_UPDATE,
-    PERMISSIONS.GOAL_VIEW,
-    PERMISSIONS.GOAL_UPDATE,
-    PERMISSIONS.DEVELOPMENT_VIEW,
-    PERMISSIONS.DEVELOPMENT_CREATE,
-    PERMISSIONS.DEVELOPMENT_UPDATE,
-    PERMISSIONS.REPORT_VIEW,
-    PERMISSIONS.REPORT_EXPORT,
   ],
 
   MANAGER: [
@@ -98,26 +82,16 @@ const ROLE_PERMISSIONS = {
     PERMISSIONS.DEVELOPMENT_VIEW,
     PERMISSIONS.DEVELOPMENT_UPDATE,
   ],
-
-  VIEWER: [
-    PERMISSIONS.REVIEW_VIEW,
-    PERMISSIONS.EMPLOYEE_VIEW,
-    PERMISSIONS.GOAL_VIEW,
-    PERMISSIONS.REPORT_VIEW,
-  ],
 };
 
-// Map legacy role strings for complete backward compatibility
 const normalizeRole = (role) => {
-  if (!role) return 'EMPLOYEE';
+  if (!role) return null;
   const upper = role.toUpperCase();
+  if (upper === 'ADMIN') return 'ADMIN';
+  if (upper === 'HR') return 'HR';
+  if (upper === 'MANAGER') return 'MANAGER';
   if (upper === 'EMPLOYEE') return 'EMPLOYEE';
-  if (upper === 'REVIEWER' || upper === 'MANAGER') return 'MANAGER';
-  if (upper === 'HR' || upper === 'HR_ADMIN') return 'HR_ADMIN';
-  if (upper === 'SUPER_ADMIN') return 'SUPER_ADMIN';
-  if (upper === 'HR_HRBP') return 'HR_HRBP';
-  if (upper === 'VIEWER') return 'VIEWER';
-  return 'EMPLOYEE';
+  return null;
 };
 
 const getPermissionsForRole = (role) => {
@@ -131,4 +105,3 @@ module.exports = {
   normalizeRole,
   getPermissionsForRole,
 };
-

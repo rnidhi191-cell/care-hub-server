@@ -11,10 +11,10 @@ router.get('/me', emp.getMyProfile);
 router.get('/direct-reports', emp.getDirectReports);
 
 // HR: Create User + Employee in one step (POST /api/v1/employees/create-with-account)
-router.post('/create-with-account', allowRoles('HR', 'HR_ADMIN', 'SUPER_ADMIN'), emp.createUserAndEmployee);
+router.post('/create-with-account', allowRoles('HR', 'ADMIN'), emp.createUserAndEmployee);
 
 // Audit Logs (HR only)
-router.get('/audit-logs', allowRoles('HR', 'HR_ADMIN', 'SUPER_ADMIN'), emp.getAuditLogs);
+router.get('/audit-logs', allowRoles('HR', 'ADMIN'), emp.getAuditLogs);
 
 // Employee Management
 router.get('/', requirePermission('employee:view'), emp.listEmployees);

@@ -8,10 +8,10 @@ router.use(authenticate);
 router.get('/', org.getOrganization);
 
 // Admin-only creation endpoints
-router.post('/departments', requireRole('SUPER_ADMIN', 'HR_ADMIN'), org.createDepartment);
-router.post('/teams', requireRole('SUPER_ADMIN', 'HR_ADMIN'), org.createTeam);
-router.post('/job-titles', requireRole('SUPER_ADMIN', 'HR_ADMIN'), org.createJobTitle);
-router.post('/locations', requireRole('SUPER_ADMIN', 'HR_ADMIN'), org.createLocation);
+router.post('/departments', requireRole('ADMIN', 'HR'), org.createDepartment);
+router.post('/teams', requireRole('ADMIN', 'HR'), org.createTeam);
+router.post('/job-titles', requireRole('ADMIN', 'HR'), org.createJobTitle);
+router.post('/locations', requireRole('ADMIN', 'HR'), org.createLocation);
 
 module.exports = router;
 

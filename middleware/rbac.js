@@ -74,8 +74,7 @@ const requirePermission = (...requiredPermissions) => {
       });
     }
 
-    // SUPER_ADMIN bypasses granular checks
-    if (req.user.role === 'SUPER_ADMIN') {
+    if (req.user.role === 'ADMIN') {
       return next();
     }
 
@@ -109,7 +108,7 @@ const requireRole = (...allowedRoles) => {
       });
     }
 
-    if (req.user.role === 'SUPER_ADMIN') {
+    if (req.user.role === 'ADMIN') {
       return next();
     }
 
